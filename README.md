@@ -1,4 +1,4 @@
-# A world-class local coding agent, ready to copy
+# Hire a local coding crew. The contract is copy-paste.
 
 One terminal. Your own models. A harness that treats coding like a team sport: a coder, a reviewer, a language server, a debugger, and a few specialists who know when to stay in their lane.
 
