@@ -69,7 +69,7 @@ Confirm them. Write them into `config.yml` only when `omp config get` shows some
 | `compaction.keepRecentTokens` | `20000` | Recent history kept verbatim during summary compaction. |
 | `compaction.autoContinue` | `true` | The task continues after compaction. |
 | `compaction.thresholdPercent` | `-1` | Reserve-based trigger: about 85% on large windows, with a reserve floor. |
-| `defaultThinkingLevel` | `high` | Already the strong reasoning default. |
+| `defaultThinkingLevel` | `high` | Strong default on a large window. §6 sets `low` when the window is 16k or 32k, because the `high` budget is 16384 tokens. |
 | `tools.approvalMode` | `yolo` | Product default. This guide changes it to `write` in §10. |
 
 This guide turns on three things that default to off: `advisor.enabled`, `memory.backend` (the memory default is `off`), and `github.enabled`. `autolearn.enabled` and `browser.relay` also default to off. `browser.enabled` and `web_search.enabled` are already on. §8 sets `lsp.diagnosticsOnEdit` to true. Its default is false, and hashline edits never hit `diagnosticsOnWrite`.
@@ -81,7 +81,7 @@ This guide turns on three things that default to off: `advisor.enabled`, `memory
 - macOS, Linux, or Windows. On Windows, WSL2 is the comfortable path.
 - Git, configured with your name and email.
 - A local inference server: Ollama, llama.cpp, or LM Studio. No hosted API key is required.
-- Enough memory for the coder in the table in §6. 32 GB is the comfortable floor for the default model. 16 GB runs the smaller stack.
+- Enough memory for a coder that returns real tool calls (§6). 32 GB holds `qwen3-coder:30b`. 24 GB unified memory holds `qwen3:14b` at a 16384 context. 16 GB needs a smaller model that still passes the tool-call probe.
 - Language-server binaries for the languages you actually work in (§8).
 - Debug-adapter binaries for the languages you want to step through (§9).
 - Node.js if you will launch an MCP server with `npx`, or run the JavaScript debug adapter. The omp binary itself can be installed without Node.
@@ -233,7 +233,7 @@ Rate limits matter only after you opt into a hosted model. With `retry.rateLimit
 
 ### Pull the local coders
 
-Ollama is the path this guide uses. Install it, start it, and pull weights that fit the machine. These tags are the current local coding picks: Qwen3-Coder for the main loop, Devstral as a second local family for review, a small Qwen coder for utility work, and gpt-oss 20B when 16 GB is the ceiling.
+Ollama is the path this guide uses. Install it, start it, and pull weights that fit the machine. The main loop needs a model that returns tool calls, not only a model that writes good code in chat. Qwen3-Coder is the default on 32 GB. `qwen3:14b` is the verified coder on 24 GB unified memory. Devstral is a second local family for review when both fit. gpt-oss 20B is the 16 GB candidate only after the probe below succeeds.
 
 ```sh
 ollama serve
@@ -246,10 +246,10 @@ ollama pull qwen3-coder:30b
 # Second local family, for the advisor, when the machine can swap or hold both
 ollama pull devstral-small-2:24b
 
-# Titles, commits, and other short work
-ollama pull qwen2.5-coder:7b
+# 24 GB unified memory: the coder that fits and returns tool calls
+ollama pull qwen3:14b
 
-# 16 GB machines: use this as default instead of qwen3-coder:30b
+# 16 GB machines: candidate default. Run the tool-call probe before assigning it.
 ollama pull gpt-oss:20b
 
 # 64 GB and above: optional larger coder for the slow role
@@ -273,19 +273,104 @@ PARAMETER num_ctx 65536
 ```
 
 ```text
-# Modelfile.qwen2.5-coder-32k
-FROM qwen2.5-coder:7b
-PARAMETER num_ctx 32768
+# Modelfile.qwen3-16k
+FROM qwen3:14b
+PARAMETER num_ctx 16384
 ```
 
 ```sh
 ollama create qwen3-coder-64k -f Modelfile.qwen3-coder-64k
 ollama create devstral-64k -f Modelfile.devstral-64k
-ollama create qwen2.5-coder-32k -f Modelfile.qwen2.5-coder-32k
+ollama create qwen3-16k -f Modelfile.qwen3-16k
 export OLLAMA_CONTEXT_LENGTH=65536
 ```
 
-On a 16 GB machine, use `32768` for both `num_ctx` and `OLLAMA_CONTEXT_LENGTH`, and build the default from `gpt-oss:20b` or `qwen2.5-coder:14b` instead of `qwen3-coder:30b`.
+On 24 GB, export `OLLAMA_CONTEXT_LENGTH=16384` instead, and use `qwen3-16k` as `default`. On 16 GB, use `32768` for both `num_ctx` and `OLLAMA_CONTEXT_LENGTH`, and build `default` from `gpt-oss:20b` only after the probe below succeeds.
+
+### The model has to call a tool
+
+omp is a loop. You give a goal. omp sends that goal and the list of tools. The model either talks, or it requests an action such as `write`, `read`, `edit`, or `bash`. omp runs the action and sends the result back. The model then takes another lap or stops. The model never touches the disk itself.
+
+A reply that merely contains JSON is not a tool call. Ollama accepts a call only when the model emits the tags in its template:
+
+```xml
+<tool_call>
+{"name": "write", "arguments": {"path": "hello.txt", "content": "ready"}}
+</tool_call>
+```
+
+or when the HTTP response fills `tool_calls`. `qwen2.5-coder:7b` and `qwen2.5-coder:14b` print the inner JSON and leave the tags off. Ollama then leaves `tool_calls` empty. omp stores the paragraph and exits, so the file is never created. This happens on Ollama's own `/api/chat` as well as through omp. `tools.format` stays `auto`. Setting it to `hermes` does not insert the missing tags, and with the full tool list that request returned HTTP 500.
+
+Do not assign `qwen2.5-coder` to `default`, `smol`, `task`, or `advisor`, and do not put it in `retry.fallbackChains`. A fallback onto that model ends the loop the same way. It can still sit in `ollama list` as a chat model. It cannot drive this agent.
+
+`qwen3:14b` passes. On a 24 GB Mac, `qwen3-16k` loaded at about 10 GB, 100% GPU, context 16384, and `/api/chat` returned `tool_calls` with an empty `content`. `qwen3-coder:30b` is the stronger agent and its weights are about 19 GB. On 24 GB unified memory that size swaps. Use it when `ollama ps` can show it at 100% GPU without the machine paging.
+
+Prove the assigned coder before a real task:
+
+```sh
+mkdir -p "$HOME/omp-probe"
+cd "$HOME/omp-probe"
+omp -p --auto-approve --thinking off --max-time 4m \
+  "Use the write tool to create hello.txt. The contents must be exactly the word ready. Then read hello.txt and stop."
+cat hello.txt
+```
+
+`hello.txt` must contain `ready`. A transcript that describes a write, with no file on disk, means this model cannot run the loop. Pick another model and probe again.
+
+Leave the stock Ollama chat template in place. Rewriting it to force `/no_think`, or to pre-seed an empty `<think>` block, made omp discard the reply (`discarded-entry-branch`) and the write never ran.
+
+`--thinking off` records the level for that run. It does not set Ollama's think flag, so Qwen 3 can still open a thinking block. On a short task the block and the tool call arrive in the same turn, and the file is written. On a large task the block can be the whole turn, and the write never starts.
+
+Do not shut that off by replacing the built-in Ollama provider in `~/.omp/agent/models.yml`. `disableReasoningWithTools` is a compat flag for the OpenAI API family, and the models file schema rejects `api: ollama-chat`. A `providers.ollama` entry with no discovery removes the default model. The same entry with `api: openai-completions` and the Ollama root URL returns HTTP 404. That file is for an extra endpoint, not for patching the built-in coder.
+
+Keep the built-in provider and the stock template. Give the model one file and one `write`, then a `read`, then the check. Prefer `write` over a hashline `edit`. Leave `defaultThinkingLevel` at `low`. `high` budgets 32768 tokens, the entire 16k window.
+
+A page-sized task can still finish. Limit that print run to the tools it needs:
+
+```sh
+omp -p --auto-approve --thinking off --tools write,read,bash --max-time 10m \
+  "Your first action is the write tool. Create the file, then read it, then run the check."
+```
+
+The first response stream may close inside the thinking block, with `OpenAI responses stream closed before a terminal response event was received`. omp continues that same session, and the next turn can call `write`. On this machine that sequence wrote `index.html`, read it back, and ran a `bash` check that printed `OK`. The run took about six minutes on `ollama/qwen3-16k:latest`. The name check does not prove the page plays. Read the file. A 9x9 grid has to be nine `tr` rows, and each stored puzzle has to be 81 characters.
+
+Keep the check command free of nested quotes. A `node -e` line full of escaped quotes was rejected by the shell (`syntax error`), and the model repeated that same command until the time limit. The file from the `write` stayed on disk. A second write in that situation built the grid with `tr` rows, and the stored solutions were still not legal Sudoku. Judge the page by reading it, not by the model's last sentence.
+
+### 24 GB unified memory
+
+One coder fits. Build `qwen3-16k` as above. Copy the selector from `omp models ollama`. It looks like `ollama/qwen3-16k:latest`.
+
+```yaml
+modelRoles:
+  default: ollama/qwen3-16k:latest
+  slow: "@default"
+  plan: "@default"
+  smol: "@default"
+  commit: "@smol"
+  task: "@default"
+  advisor: "@default"
+  tiny: local/lfm2.5-230m
+  memory: local/lfm2-1.2b
+  web: web/duckduckgo
+
+retry:
+  fallbackChains:
+    default: []
+    web: []
+    dictation: []
+
+defaultThinkingLevel: low
+
+advisor:
+  enabled: true
+  reviewMode: agent-end
+```
+
+`defaultThinkingLevel: high` budgets 16384 thinking tokens, which is the whole 16k window. `low` leaves room for the tools and the file. Qwen 3 still opens a thinking block. On a large first task that block can be the entire turn, and the write never starts. A print run that must act uses `--thinking off`.
+
+`reviewMode: agent-end` reviews once, when the agent yields. `turn` runs a second full generation on the same GPU after every message. On this hardware that is the difference between a reply and a machine that is paging.
+
+`ollama ps` after a probe should show `qwen3-16k`, about 10 GB, `100% GPU`, context `16384`. A 14 GB resident size on a 24 GB Mac means the context is too long. Lower `num_ctx` and `OLLAMA_CONTEXT_LENGTH` together.
 
 On-device helpers for titles and memory extraction, so those turns do not load the coder:
 
@@ -307,7 +392,7 @@ modelRoles:
   default: ollama/qwen3-coder-64k
   slow: ollama/qwen3-coder-64k:high
   plan: "@slow"
-  smol: ollama/qwen2.5-coder-32k
+  smol: "@default"
   commit: "@smol"
   task: "@default"
   advisor: ollama/devstral-64k
@@ -319,7 +404,6 @@ retry:
   fallbackChains:
     default:
       - ollama/devstral-64k
-      - ollama/qwen2.5-coder-32k
     slow:
       - ollama/qwen3-coder-64k
     smol:
@@ -354,14 +438,14 @@ Drop the `:high` suffix if that role does not resolve. Some local servers have n
 
 ### One-model machine
 
-Use this when only one coder fits. The advisor still reviews every turn. It uses the same weights, so it is a second pass, not a second family.
+Use this when only one coder fits. The advisor uses the same weights, so set `reviewMode` to `agent-end` as in the 24 GB block above. `turn` would generate every reply twice on that one GPU. On 24 GB the coder is `ollama/qwen3-16k:latest`, not `qwen3-coder-64k`.
 
 ```yaml
 modelRoles:
   default: ollama/qwen3-coder-64k
   slow: "@default"
   plan: "@default"
-  smol: ollama/qwen2.5-coder-32k
+  smol: "@default"
   commit: "@smol"
   task: "@default"
   advisor: "@default"
@@ -371,12 +455,11 @@ modelRoles:
 
 retry:
   fallbackChains:
-    default:
-      - ollama/qwen2.5-coder-32k
+    default: []
     web: []
 ```
 
-On 16 GB, change `default` to the gpt-oss model you created with `num_ctx` 32768. On 8 GB, `default` is `qwen2.5-coder:7b` with a 32768 context, and `smol` is `"@default"`.
+`smol` stays `"@default"` until a smaller model passes the tool-call probe. On 16 GB, change `default` to the gpt-oss model you created with `num_ctx` 32768, after that probe. An 8 GB machine does not get this loop from `qwen2.5-coder:7b`. That model writes code in chat and does not return `tool_calls`.
 
 ### 64 GB and above
 
@@ -394,10 +477,10 @@ Leave `default` on `qwen3-coder-64k` so ordinary edits stay on the faster model.
 
 | Role | Use | Local selection |
 | --- | --- | --- |
-| `default` | Main coding loop | Best coder that fits with at least 32k context. `qwen3-coder:30b` at 32 GB. `gpt-oss:20b` at 16 GB. |
+| `default` | Main coding loop | Best coder that passes the tool-call probe and stays resident. `qwen3-coder:30b` at 32 GB. `qwen3:14b` at 16384 on 24 GB. `gpt-oss:20b` at 16 GB only after the probe. |
 | `slow` | Hard review and architecture | The same coder with `:high` when the server has a thinking ladder, or `qwen3-coder-next` at 64 GB |
 | `plan` | Plan mode | `"@slow"` |
-| `smol` | Titles and mechanical edits | `qwen2.5-coder:7b` |
+| `smol` | Titles and mechanical edits | `"@default"` until a smaller model passes the tool-call probe. A model that cannot call tools cannot edit. |
 | `commit` | Commit messages | `"@smol"` |
 | `task` | Subagent fan-out | `"@default"` on one GPU. A second large model thrashes memory. |
 | `advisor` | Reviews primary turns | `devstral-small-2:24b` when it fits. Otherwise `"@default"`. |
@@ -453,7 +536,7 @@ advisor:
 
 `syncBacklog: "off"` must be quoted so YAML does not turn it into a boolean.
 
-`reviewMode: turn` plus `reviewInterval: 1` is a second local generation on every primary turn. That is the supervision this setup is buying. When the advisor model forces the GPU to swap on every turn, set `reviewMode` to `agent-end` before you disable the advisor.
+`reviewMode: turn` plus `reviewInterval: 1` is a second local generation on every primary turn. Use that when the advisor is a second model that stays resident. When `advisor` is `"@default"`, set `reviewMode` to `agent-end`. One GPU then reviews once, at the end of the task, instead of generating every reply twice. A turn that only thinks still counts as a yield, so `turn` will spend another full generation on that plan and the write waits.
 
 A roster of named advisors with their own models, tools, and cadence lives in `WATCHDOG.yml`. The single advisor above is the right start. Per-subagent override: `task.agentAdvisor`, or the `advisor` frontmatter field, editable from `/agents`.
 
@@ -828,6 +911,8 @@ omp config get edit.mode
 ```
 
 The result should be `hashline`. The model points at lines, and the runtime checks that the surrounding content still hashes to what it read. A stale file rejects the patch. Re-read, then edit again. That rejection is the safety property.
+
+The edit body has to start with `[path#HASH]` and a hunk header such as `PUT N.=M:`. A bare `PUT 3: new line` is rejected, the file stays unchanged, and omp sends the format error back so the model can try again. A full-file `write` does not need that shape. Prefer `write` when the model keeps missing the hunk header. `edit.modelVariants` can pin `replace` for one weaker model id if hashline never lands.
 
 `PI_EDIT_VARIANT` pins the mode for one process (`hashline`, `apply_patch`, `patch`, `replace`, `sloppy`). `auto` leaves the setting unset. Per-model overrides:
 
@@ -1776,6 +1861,7 @@ omp config get checkpoint.enabled    # true
 ```
 
 - [ ] `omp models ollama` lists the coder you assigned, and every chat role resolves to `ollama/`, `llama.cpp/`, `lm-studio/`, `local/`, or `apple/`.
+- [ ] The §6 probe created `hello.txt` containing `ready`. A transcript that only describes the write does not count.
 - [ ] `omp web-search --model web/duckduckgo "current Bun release"` returns sources, unless web search is off.
 - [ ] `gh auth status` is logged in, and a new session exposes the GitHub tool.
 - [ ] Startup prints no warning about an unknown fallback entry.
@@ -1817,7 +1903,12 @@ omp config get checkpoint.enabled    # true
 | Attach fails | Dead pid, unreachable port, or unnamed adapter | Include pid or host:port and the adapter name. |
 | "Another debug session" | One root session is still active | Ask omp to terminate it, then retry. |
 | Hashline patch rejected | File changed since the read | Re-read and edit. The rejection is expected. |
-| The machine swaps models constantly | Advisor on every turn is a second large local model, or `task` points at a different large model | Set `advisor` to `@default` or `advisor.reviewMode` to `agent-end`. Keep `task` on `@default`. |
+| The machine swaps models constantly | Advisor on every turn is a second large local model, or `task` points at a different large model | Set `advisor` to `@default` and `advisor.reviewMode` to `agent-end`. Keep `task` on `@default`. |
+| The transcript shows a JSON `write` and the file was never created | The model printed a tool call as chat text. `tool_calls` was empty | The coder cannot drive the loop. `qwen2.5-coder` does this. Run the probe in §6 and assign a model that returns `tool_calls`. Leave `tools.format` at `auto`. |
+| A turn is only a thinking block, or the response stream closes before a terminal event | Qwen 3 planned inside the thinking channel. `--thinking off` does not set Ollama's think flag | Keep `defaultThinkingLevel: low`. Limit the run to `--tools write,read,bash` and ask for one `write`. omp can continue the same session and call the tool on the next turn. Do not force `/no_think` in the Modelfile, and do not replace the built-in Ollama provider in `models.yml`. |
+| `ollama ps` shows about 14 GB on a 24 GB Mac | `num_ctx` is 32768 for a 14B model | Create the model at `16384` and set `OLLAMA_CONTEXT_LENGTH=16384`. |
+| HTTP 500 from Ollama right after a tool-format change | `tools.format: hermes` with the full tool list overflowed the request | `omp config set tools.format auto`. |
+| Edit says the payload has no hunk header | The model sent a bare `PUT` instead of a hashline patch | Re-read, then edit with `[path#HASH]`, or `write` the whole file. |
 | 429 stays on the same model | `retry.rateLimitWalksChain` is false | Expected until `retry.maxRetries` is spent. Set `retry.rateLimitWalksChain: true` to walk immediately. |
 | A timer or runner cannot see Ollama | The job's environment has no `OLLAMA_BASE_URL`, or Ollama is not running | Start Ollama before the job. In Docker, use `http://host.docker.internal:11434`. |
 | Dictation does nothing | `stt.enabled` is false, or `modelRoles.dictation` is not an `stt` model | `omp models --kind stt`, then set `dictation` to a listed id. |
@@ -1840,7 +1931,7 @@ omp config get checkpoint.enabled    # true
 
 ## 20. Complete global config
 
-Save as `~/.omp/agent/config.yml`. Replace every model id with one `omp models` lists as available. This file sets only the values this guide changes. Everything in §2 stays at the built-in default on purpose.
+Save as `~/.omp/agent/config.yml` on a 32 GB machine where `qwen3-coder:30b` and Devstral both stay resident. Replace every model id with one `omp models` lists as available. On 24 GB, use the `qwen3-16k` block in §6 instead of this file: one model, `defaultThinkingLevel: low`, and `advisor.reviewMode: agent-end`. This file sets only the values this guide changes. Everything in §2 stays at the built-in default on purpose, except `defaultThinkingLevel` on a 16k or 32k window.
 
 ```yaml
 # ~/.omp/agent/config.yml
@@ -1851,7 +1942,7 @@ modelRoles:
   default: ollama/qwen3-coder-64k
   slow: ollama/qwen3-coder-64k:high
   plan: "@slow"
-  smol: ollama/qwen2.5-coder-32k
+  smol: "@default"
   commit: "@smol"
   task: "@default"
   advisor: ollama/devstral-64k
@@ -1870,7 +1961,6 @@ retry:
   fallbackChains:
     default:
       - ollama/devstral-64k
-      - ollama/qwen2.5-coder-32k
     slow:
       - ollama/qwen3-coder-64k
     smol:
@@ -2016,16 +2106,19 @@ Paths:
    - `omp --version` must succeed.
    - Install and start Ollama (or llama.cpp, or LM Studio). Pull the local coders from §6 and raise `num_ctx` to at least 32768, 65536 on a 32 GB machine.
    - `omp models ollama` must list those models before you write roles. Do not assign a hosted model.
+   - On 24 GB, pull `qwen3:14b`, create `qwen3-16k` with `num_ctx` 16384, and set `OLLAMA_CONTEXT_LENGTH=16384`. Do not assign `qwen2.5-coder` to any role that calls tools.
+   - Run the §6 probe. `hello.txt` must exist before you continue.
 
 2. Model roles and fallbacks in the global config.
    - Set `modelRoles` for `default`, `slow`, `plan`, `smol`, `commit`, `task`, `advisor`, `tiny`, `memory`, and `web` using only selectors from `omp models ollama`, `omp models llama.cpp`, `omp models lm-studio`, `omp tiny-models list`, or `web/duckduckgo`.
-   - The default coder is a local Qwen3-Coder (or gpt-oss 20B on 16 GB). The advisor is local Devstral when it fits, otherwise `"@default"`. `task` is `"@default"`.
+   - The default coder is a local model that passed the tool-call probe: Qwen3-Coder on 32 GB, `qwen3-16k` on 24 GB, or gpt-oss 20B on 16 GB. The advisor is local Devstral when it fits, otherwise `"@default"`. `task` and `smol` are `"@default"` until a smaller model passes the same probe.
    - Set `retry.fallbackChains` to other local models only. Set `retry.fallbackChains.web` to `[]`.
    - Set `disabledProviders` to the hosted list in §6, including `anthropic`, `openai`, `openai-codex`, `google`, and `openrouter`.
    - Verify: `omp models ollama`, `omp web-search --model web/duckduckgo "current Bun release"`, then `/model` → Roles. Every chat role is local. Startup warnings about chains are fixed before continuing.
 
 3. Advisor.
-   - Set `advisor.enabled: true`, `advisor.reviewMode: turn`, `advisor.reviewInterval: 1`, `advisor.continueSeverity: concern`.
+   - Set `advisor.enabled: true`, `advisor.reviewInterval: 1`, `advisor.continueSeverity: concern`. Use `reviewMode: turn` when the advisor is a second resident model. Use `agent-end` when `advisor` is `"@default"`.
+   - On a 16k or 32k window, `omp config set defaultThinkingLevel low`.
    - Quote `advisor.syncBacklog: "off"` if you write it.
    - Verify: `omp config get advisor.enabled` is true, and a live session shows an advisor card on a trivial edit.
 
