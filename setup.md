@@ -1,8 +1,8 @@
-# OMP World-Class Coding Agent Setup Guide
+# Coding Agent Setup Guide using oh-my-pi
 
-A copy-paste setup for [omp](https://github.com/can1357/oh-my-pi) (Oh My Pi) as a coding harness that outruns a single-model agent: role-routed models, a second model reviewing every turn, semantic navigation, a real debugger, hash-anchored edits, isolated worktree subagents, live GitHub, a real browser, current library docs, and project memory.
+Copy-paste setup for [omp](https://github.com/can1357/oh-my-pi) (Oh My Pi). Chat roles run on a model you pull locally. Copy the selector from `omp models ollama` after the server is up. Hosted APIs are the optional note at the end of §6.
 
-This guide matches the current omp settings schema, CLI, and file formats. `omp config list` remains the authority for every key on the build you installed. Every chat role in this guide is a model you pull and run locally. Copy the selector from `omp models ollama` after the server is up. Hosted APIs are covered only in the optional note in §6.
+`omp config list` on the build you installed wins when a key here disagrees. The short case for switching is in the [README](README.md).
 
 Official references:
 
@@ -24,27 +24,20 @@ Official references:
 
 ## 1. Purpose
 
-omp is an MIT-licensed, bring-your-own-model terminal coding agent. Claude Code is a strong agent tied to one vendor, with MCP, skills, and hooks of its own. This setup is the harness around omp: the same session can rename through a language server, stop a real process in a debugger, reject a stale patch, take a second model's review, check a pull request out into a worktree, read the current library docs, and query the tracker and the error tracker you already use.
+Claude Code and omp are both harnesses. Claude Code's model seat stays Claude: `sonnet`, `opus`, `haiku`, or `fable`, including on Bedrock, Vertex, and Foundry. `/advisor` can seat another Claude model when you turn it on. An LSP plugin can supply diagnostics and navigation. omp's seat can be any local model. The agent renames through the language server, attaches a debugger, and hashline rejects a stale anchor. A local coder is not automatically smarter than Claude. The short case is in the [README](README.md).
 
-That is a better coding system when all of these are true in one session:
+Coming from Claude Code or Cursor:
 
-| Capability | How this setup does it |
+| Already on disk | In omp |
 | --- | --- |
-| Semantic edits | LSP rename, diagnostics, and code actions for source, and for YAML, shell, Terraform, Dockerfiles, and Markdown once those binaries are installed. Hashline rejects a patch whose anchors no longer match the file. |
-| Runtime truth | DAP breakpoints, stacks, and variables. The agent observes the process. |
-| A second opinion | `advisor` reviews primary turns. On a machine that can hold two local models, the advisor is a different family from `default`. |
-| Parallel implementation | `task` fans out into git worktrees. The parent integrates. |
-| GitHub without a second GitHub tool | Native `github` uses your `gh` login. PR checkout is a worktree. Actions can be watched from the session. |
-| Current library APIs | Context7 over MCP, loaded when the task needs docs. Training data is the fallback. |
-| How a public dependency is built | DeepWiki over MCP, with no key. It answers how a public repository is put together. Private repositories stay off this default. |
-| The systems around the code | Linear read-only, project-scoped Sentry, a restricted Postgres connection, and Figma only in a repo that implements from a Figma file and only after `/mcp test figma` succeeds. |
-| A real browser | omp's browser for public pages. Browser Relay attaches a logged-in Chrome tab. Playwright MCP is left off, because omp drops those servers while its own browser is enabled. |
-| A policy the model cannot talk its way past | A hook blocks `git push --force`. `bash.gitGuard` blocks destructive git in a shared checkout. |
-| Local weights only | Every chat role runs on Ollama, llama.cpp, or LM Studio on this machine. Hosted models stay disabled until you opt in. |
+| `.claude/skills`, `.cursor/rules`, `CLAUDE.md`, `AGENTS.md`, MCP | Loaded on first launch. Run `/mcp list`. Disable what you do not want. omp does not edit those files. |
+| Claude subagents | Not imported. Bundled specialists are already there (§11). Copy one into `.omp/agents` when you still want it. |
+| Claude hooks, in `settings.json` or `~/.claude/hooks/` | Not run. omp hooks are TypeScript in `~/.omp/agent/hooks/` (§10). |
+| Claude auto-memory, Cursor memories | Stay where they are. omp memory starts empty (§13). |
+| Model picker | Chat roles here are local (§6). A hosted model is one role, after that works. |
+| The editor | The terminal, or Zed, JetBrains, or another ACP client (`omp acp`, §16). |
 
-Use a native omp tool when one exists. Add an MCP server only for a system the native tools do not speak. Each extra server adds tools and instructions to every turn, including subagent turns.
-
-Leave a default in place when it is already the strong setting. The work is credentials, role assignment, the advisor, language servers, debug adapters, GitHub, search, Context7, DeepWiki, memory, and the per-repo connectors you actually operate.
+Use a native tool before an MCP server. Each extra server is sent on every turn, including subagent turns. Leave a default alone when §2 already calls it the strong setting. The work is credentials, roles, the advisor, language servers, debug adapters, GitHub, search, Context7, DeepWiki, memory, and the per-repo connectors you use.
 
 ---
 
@@ -227,38 +220,52 @@ A selector is `provider/model-id`, optionally with a thinking suffix: `:off`, `:
 
 `modelRoles.<role>` is the primary. `retry.fallbackChains.<role>` is the ordered fallback. For chat roles, the effective chain is the primary plus those entries. A key that contains `/` is model-oriented and beats a role key: `provider/model-id` matches that model, `provider/*` matches every model of that provider. A `provider/*` entry keeps the failing model id and swaps the provider.
 
-Rate limits are the exception. With `retry.rateLimitWalksChain` left at its default `false`, a 429 retries the same model until `retry.maxRetries` (default 10) is spent, because that turn's thinking is signed by the failing model. Set `retry.rateLimitWalksChain: true` when a 429 should walk the chain immediately. Quota and outage behavior is `retry.fallbackOn` (`any`, `usage-limit`, `except-usage-limit`). `retry.fallbackRevertPolicy: cooldown-expiry` returns to the primary after its cooldown. `never` stays on the fallback until you switch.
+Hosted rate limits apply only after you opt into a hosted model. `retry.rateLimitWalksChain` defaults to `false`: a 429 retries that model until `retry.maxRetries` (default 10), because the turn's thinking is signed by it. Set it `true` to walk the chain immediately. `retry.fallbackOn` is `any`, `usage-limit`, or `except-usage-limit`. `retry.fallbackRevertPolicy: cooldown-expiry` returns to the primary after cooldown. `never` stays on the fallback.
 
-Rate limits matter only after you opt into a hosted model. With `retry.rateLimitWalksChain` left at `false`, a 429 retries that same model until `retry.maxRetries` (default 10) is spent. Local servers fail differently: the process is down, the model is not pulled, or the context does not fit. `retry.fallbackChains` then hands the turn to the next local model you listed.
+A local server fails differently: it is down, the model is not pulled, or the context does not fit. `retry.fallbackChains` then uses the next local model you listed.
 
-### Pull the local coders
+### Get the loop running
 
-Ollama is the path this guide uses. Install it, start it, and pull weights that fit the machine. The main loop needs a model that returns tool calls, not only a model that writes good code in chat. Qwen3-Coder is the default on 32 GB. `qwen3:14b` is the verified coder on 24 GB unified memory. Devstral is a second local family for review when both fit. gpt-oss 20B is the 16 GB candidate only after the probe below succeeds.
+The loop is: you give a goal, the local model returns a tool call, omp runs it, the result goes back, and the model takes another turn or stops. A reply that describes a write is not the loop. Stop at the probe below before configuring the advisor, language servers, or MCP.
+
+Ollama is the server this guide uses. Install it in the same environment that runs omp. A WSL shell does not see the Windows Ollama app on `127.0.0.1`.
 
 ```sh
-ollama serve
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+The macOS app already listens on port 11434. Start `ollama serve` only when this prints nothing:
+
 ```sh
-# 32 GB unified memory, or a 24 GB GPU: the default coder
+curl -sf http://127.0.0.1:11434/api/version
+```
+
+Pull one coder for the machine you have. Qwen3-Coder is the 32 GB default. `qwen3:14b` is the coder that fits in 24 GB unified memory and returns tool calls. Devstral is a second family for the advisor, and only when both stay resident. gpt-oss 20B is the 16 GB candidate, and only after the probe passes. `qwen2.5-coder` writes code in chat and does not return `tool_calls`. Do not pull it for this loop.
+
+```sh
+# 32 GB unified memory, or a 24 GB GPU
 ollama pull qwen3-coder:30b
 
-# Second local family, for the advisor, when the machine can swap or hold both
+# Advisor, only when the machine can hold it beside the coder
 ollama pull devstral-small-2:24b
 
-# 24 GB unified memory: the coder that fits and returns tool calls
+# 24 GB unified memory
 ollama pull qwen3:14b
 
-# 16 GB machines: candidate default. Run the tool-call probe before assigning it.
+# 16 GB. Probe before you assign it.
 ollama pull gpt-oss:20b
 
-# 64 GB and above: optional larger coder for the slow role
+# 64 GB and above, optional, for the slow role
 ollama pull qwen3-coder-next
 ```
 
-If a tag is missing, open the Ollama library, pull the current coding tag, and copy the id `omp models ollama` prints. Do not invent a selector.
+If a tag is missing, pull the current coding tag from the Ollama library. Copy the id `omp models ollama` prints. Do not invent a selector.
 
-An agent needs a long context. Ollama's default is often a few thousand tokens, which drops the middle of the session. Raise it with a Modelfile and tell omp the same number. `OLLAMA_CONTEXT_LENGTH` sets omp's budget. It does not change Ollama's `num_ctx` by itself.
+Ollama's default context is a few thousand tokens. The tool list and the file do not fit, and the model stops calling tools. Raise `num_ctx` in a Modelfile. Create only the files for models you pulled.
 
 ```text
 # Modelfile.qwen3-coder-64k
@@ -278,63 +285,64 @@ FROM qwen3:14b
 PARAMETER num_ctx 16384
 ```
 
+```text
+# Modelfile.gpt-oss-32k
+FROM gpt-oss:20b
+PARAMETER num_ctx 32768
+```
+
+Run the `ollama create` lines for the Modelfiles you wrote. A create whose `FROM` model was not pulled fails.
+
 ```sh
-ollama create qwen3-coder-64k -f Modelfile.qwen3-coder-64k
-ollama create devstral-64k -f Modelfile.devstral-64k
-ollama create qwen3-16k -f Modelfile.qwen3-16k
+ollama create qwen3-coder-64k -f Modelfile.qwen3-coder-64k   # 32 GB coder
+ollama create devstral-64k -f Modelfile.devstral-64k         # advisor, when it fits
+ollama create qwen3-16k -f Modelfile.qwen3-16k               # 24 GB coder
+ollama create gpt-oss-32k -f Modelfile.gpt-oss-32k           # 16 GB candidate
+```
+
+`OLLAMA_CONTEXT_LENGTH` is omp's budget. It does not change Ollama's `num_ctx`. Set it to the same number, in the shell profile that starts omp (`~/.zshrc` or `~/.bashrc`), then open a new terminal:
+
+```sh
+# 65536 with the 64k models, 16384 with qwen3-16k, 32768 with gpt-oss-32k
 export OLLAMA_CONTEXT_LENGTH=65536
 ```
 
-On 24 GB, export `OLLAMA_CONTEXT_LENGTH=16384` instead, and use `qwen3-16k` as `default`. On 16 GB, use `32768` for both `num_ctx` and `OLLAMA_CONTEXT_LENGTH`, and build `default` from `gpt-oss:20b` only after the probe below succeeds.
+A GUI or editor that launches omp does not read that file. Put the same variable in that app's environment. `qwen3-coder:30b` is about 19 GB and swaps on 24 GB unified memory. Use it when `ollama ps` shows 100% GPU and the machine is not paging.
+
+Confirm omp can see the model:
+
+```sh
+omp models ollama
+```
 
 ### The model has to call a tool
 
-omp is a loop. You give a goal. omp sends that goal and the list of tools. The model either talks, or it requests an action such as `write`, `read`, `edit`, or `bash`. omp runs the action and sends the result back. The model then takes another lap or stops. The model never touches the disk itself.
+A JSON paragraph in the chat is not a tool call. Ollama accepts a call when the model emits `<tool_call>` tags, or when the HTTP response fills `tool_calls`. Otherwise omp stores the text and stops, and the file is never written. `qwen2.5-coder:7b` and `qwen2.5-coder:14b` do this. Do not assign them to `default`, `smol`, `task`, or `advisor`, and do not put them in `retry.fallbackChains`. `qwen3:14b` passes.
 
-A reply that merely contains JSON is not a tool call. Ollama accepts a call only when the model emits the tags in its template:
-
-```xml
-<tool_call>
-{"name": "write", "arguments": {"path": "hello.txt", "content": "ready"}}
-</tool_call>
-```
-
-or when the HTTP response fills `tool_calls`. `qwen2.5-coder:7b` and `qwen2.5-coder:14b` print the inner JSON and leave the tags off. Ollama then leaves `tool_calls` empty. omp stores the paragraph and exits, so the file is never created. This happens on Ollama's own `/api/chat` as well as through omp. `tools.format` stays `auto`. Setting it to `hermes` does not insert the missing tags, and with the full tool list that request returned HTTP 500.
-
-Do not assign `qwen2.5-coder` to `default`, `smol`, `task`, or `advisor`, and do not put it in `retry.fallbackChains`. A fallback onto that model ends the loop the same way. It can still sit in `ollama list` as a chat model. It cannot drive this agent.
-
-`qwen3:14b` passes. On a 24 GB Mac, `qwen3-16k` loaded at about 10 GB, 100% GPU, context 16384, and `/api/chat` returned `tool_calls` with an empty `content`. `qwen3-coder:30b` is the stronger agent and its weights are about 19 GB. On 24 GB unified memory that size swaps. Use it when `ollama ps` can show it at 100% GPU without the machine paging.
-
-Prove the assigned coder before a real task:
+Probe the selector `omp models ollama` printed. `--model` is required. Without it, the probe can hit whatever omp would use by default, which is not the proof you need.
 
 ```sh
-mkdir -p "$HOME/omp-probe"
-cd "$HOME/omp-probe"
-omp -p --auto-approve --thinking off --max-time 4m \
+mkdir -p "$HOME/omp-probe" && cd "$HOME/omp-probe"
+omp -p --model ollama/qwen3-16k:latest --auto-approve --thinking off --max-time 4m \
   "Use the write tool to create hello.txt. The contents must be exactly the word ready. Then read hello.txt and stop."
 cat hello.txt
 ```
 
-`hello.txt` must contain `ready`. A transcript that describes a write, with no file on disk, means this model cannot run the loop. Pick another model and probe again.
+Replace `ollama/qwen3-16k:latest` with your selector. `hello.txt` must contain `ready`. A transcript that only describes the write means this model cannot run the loop. Pick another model and probe again. Do not write `modelRoles` until this passes.
 
-Leave the stock Ollama chat template in place. Rewriting it to force `/no_think`, or to pre-seed an empty `<think>` block, made omp discard the reply (`discarded-entry-branch`) and the write never ran.
+Leave the stock Ollama template alone. Forcing `/no_think` or an empty `<think>` block made omp discard the reply. Do not replace the built-in Ollama provider in `~/.omp/agent/models.yml`. That file is for an extra endpoint. A `providers.ollama` entry with no discovery removes the default model. `api: openai-completions` against the Ollama root returns HTTP 404. `tools.format` stays `auto`. `hermes` returned HTTP 500 with the full tool list.
 
-`--thinking off` records the level for that run. It does not set Ollama's think flag, so Qwen 3 can still open a thinking block. On a short task the block and the tool call arrive in the same turn, and the file is written. On a large task the block can be the whole turn, and the write never starts.
-
-Do not shut that off by replacing the built-in Ollama provider in `~/.omp/agent/models.yml`. `disableReasoningWithTools` is a compat flag for the OpenAI API family, and the models file schema rejects `api: ollama-chat`. A `providers.ollama` entry with no discovery removes the default model. The same entry with `api: openai-completions` and the Ollama root URL returns HTTP 404. That file is for an extra endpoint, not for patching the built-in coder.
-
-Keep the built-in provider and the stock template. Give the model one file and one `write`, then a `read`, then the check. Prefer `write` over a hashline `edit`. Leave `defaultThinkingLevel` at `low`. `high` budgets 32768 tokens, the entire 16k window.
-
-A page-sized task can still finish. Limit that print run to the tools it needs:
+`--thinking off` does not set Ollama's think flag. Qwen 3 can spend the whole turn in a thinking block, and the write never starts. On a 16k or 32k window the YAML below sets `defaultThinkingLevel: low`. `high` budgets 16384 tokens. If a run only thinks, limit the tools and ask for the write first. Keep `--model`:
 
 ```sh
-omp -p --auto-approve --thinking off --tools write,read,bash --max-time 10m \
+omp -p --model ollama/qwen3-16k:latest --auto-approve --thinking off \
+  --tools write,read,bash --max-time 10m \
   "Your first action is the write tool. Create the file, then read it, then run the check."
 ```
 
-The first response stream may close inside the thinking block, with `OpenAI responses stream closed before a terminal response event was received`. omp continues that same session, and the next turn can call `write`. On this machine that sequence wrote `index.html`, read it back, and ran a `bash` check that printed `OK`. The run took about six minutes on `ollama/qwen3-16k:latest`. The name check does not prove the page plays. Read the file. A 9x9 grid has to be nine `tr` rows, and each stored puzzle has to be 81 characters.
+A stream that closes inside the thinking block can continue in the same session. The next turn can call `write`. Keep shell checks free of nested quotes.
 
-Keep the check command free of nested quotes. A `node -e` line full of escaped quotes was rejected by the shell (`syntax error`), and the model repeated that same command until the time limit. The file from the `write` stayed on disk. A second write in that situation built the grid with `tr` rows, and the stored solutions were still not legal Sudoku. Judge the page by reading it, not by the model's last sentence.
+After the probe, write the YAML for your machine. On 32 GB with both models resident, use the default local stack. On 24 GB, or whenever only one coder fits, use the one-model block and `reviewMode: agent-end`. `turn` generates a second reply after every message on the same GPU, and the loop stalls. Then run the repo check in §17 before adding MCP.
 
 ### 24 GB unified memory
 
@@ -366,9 +374,9 @@ advisor:
   reviewMode: agent-end
 ```
 
-`defaultThinkingLevel: high` budgets 16384 thinking tokens, which is the whole 16k window. `low` leaves room for the tools and the file. Qwen 3 still opens a thinking block. On a large first task that block can be the entire turn, and the write never starts. A print run that must act uses `--thinking off`.
+`defaultThinkingLevel: high` budgets 16384 thinking tokens, the whole 16k window. `low` leaves room for tools and the file. Qwen 3 can still think. A run that must act uses `--thinking off`.
 
-`reviewMode: agent-end` reviews once, when the agent yields. `turn` runs a second full generation on the same GPU after every message. On this hardware that is the difference between a reply and a machine that is paging.
+`reviewMode: agent-end` reviews once, when the agent yields. `turn` generates again after every message on the same GPU.
 
 `ollama ps` after a probe should show `qwen3-16k`, about 10 GB, `100% GPU`, context `16384`. A 14 GB resident size on a 24 GB Mac means the context is too long. Lower `num_ctx` and `OLLAMA_CONTEXT_LENGTH` together.
 
@@ -459,7 +467,7 @@ retry:
     web: []
 ```
 
-`smol` stays `"@default"` until a smaller model passes the tool-call probe. On 16 GB, change `default` to the gpt-oss model you created with `num_ctx` 32768, after that probe. An 8 GB machine does not get this loop from `qwen2.5-coder:7b`. That model writes code in chat and does not return `tool_calls`.
+`smol` stays `"@default"` until a smaller model passes the tool-call probe. On 16 GB, set `default` to the `gpt-oss-32k` selector `omp models ollama` prints, after that probe, and set `OLLAMA_CONTEXT_LENGTH=32768`. An 8 GB machine does not get this loop from `qwen2.5-coder:7b`. That model writes code in chat and does not return `tool_calls`.
 
 ### 64 GB and above
 
@@ -587,9 +595,7 @@ command -v rust-analyzer
 
 ### YAML, shell, Terraform, Docker, and Markdown
 
-These servers are already built in. omp starts one when its binary is on `PATH` and a root marker is in the directory you launched from. Do not add them to `lsp.json`.
-
-After a write, diagnostics come back through `lsp.diagnosticsOnWrite`. The local model then fixes the file from that error instead of rereading it and guessing. Rename, definition, and references go through the same server.
+These servers are built in. omp starts one when its binary is on `PATH` and a root marker is in the directory you launched from. Do not add them to `lsp.json`. Diagnostics after a full write use `lsp.diagnosticsOnWrite`. Rename, definition, and references use the same server.
 
 | Built-in name | Binary omp looks for | Files | What a write should surface |
 | --- | --- | --- | --- |
@@ -618,13 +624,11 @@ command -v marksman
 
 Start a new session after installing. A Helm chart also starts the built-in `helm-ls` server (`helm_ls`) when `Chart.yaml` is in the launch directory.
 
-You usually do not need an LSP config file. Add `<repo>/.omp/lsp.json` to override a built-in server or to silence a duplicate. Overrides merge onto the built-in entry. The map key is `servers`, and the server key is the built-in name.
-
-A custom server needs `command`, `args`, `fileTypes`, and `rootMarkers`. User and project files merge. Highest precedence is an `lsp.json` in the directory where omp starts, then `.omp/lsp.json`. The same directory also accepts `.lsp.json` and YAML variants.
+Skip `lsp.json` until you must override or silence a built-in server. The map key is `servers`. A custom server needs `command`, `args`, `fileTypes`, and `rootMarkers`. Highest precedence is an `lsp.json` in the start directory, then `.omp/lsp.json`. `.lsp.json` and YAML variants in that directory also work.
 
 ### Diagnostics after a hashline edit
 
-This harness edits with hashline. `lsp.diagnosticsOnWrite` runs after a full file write. `lsp.diagnosticsOnEdit` runs after the smaller edits, and it defaults to false. Turn it on, and cap how long a server may sit on one reply. `requestTimeout` is seconds.
+Hashline edits do not hit `diagnosticsOnWrite`. Turn on `diagnosticsOnEdit`. `requestTimeout` is seconds.
 
 ```sh
 omp config set lsp.diagnosticsOnEdit true
@@ -639,9 +643,7 @@ lsp:
   requestTimeout: 10
 ```
 
-Leave `lsp.diagnosticsDeduplicate`, `lsp.lazy`, and `lsp.shared` at their defaults. Deduplication keeps a repeated error out of the local context. Lazy start keeps every server from loading beside the coder. Shared servers mean a worktree subagent reuses the one already running.
-
-Leave `lsp.formatOnWrite` off unless that server's formatter is the one the repo uses, such as Ruff, gofmt, or rustfmt. A TypeScript server formatting a Prettier repo will fight the repo.
+Leave `lsp.diagnosticsDeduplicate`, `lsp.lazy`, and `lsp.shared` at their defaults. Leave `lsp.formatOnWrite` off unless that server's formatter is the repo's, such as Ruff, gofmt, or rustfmt. A TypeScript server formatting a Prettier repo will fight the repo.
 
 Rust-analyzer's built-in settings already set `checkOnSave` to false, so diagnostics on edit do not start a full cargo check.
 
@@ -835,70 +837,28 @@ TypeScript on Node breaks in the file that actually runs. Set source maps on `js
 }
 ```
 
-Change `dist/**/*.js` to this repo's emit directory.
-
-A custom adapter needs a command plus enough matching data to be selected:
-
-```json
-{
-  "adapters": {
-    "acme-jvm": {
-      "command": "./tools/acme-debug-adapter",
-      "args": ["--stdio"],
-      "languages": ["java", "kotlin"],
-      "fileTypes": [".java", ".kt", ".kts"],
-      "rootMarkers": ["pom.xml", "build.gradle", "build.gradle.kts"],
-      "launchDefaults": {
-        "request": "launch",
-        "stopOnEntry": true,
-        "projectRoot": "."
-      }
-    }
-  }
-}
-```
+Change `dist/**/*.js` to this repo's emit directory. A custom adapter needs `command` plus `languages`, `fileTypes`, or `rootMarkers` so omp can select it.
 
 ### How to ask
 
-Give a path, a stop, and the question. A launch target is a path. Ask omp to build first when the binary does not exist yet. Most built-in launches stop on entry so breakpoints can be installed before resume. Go can take a package directory. Other adapters want a file or executable.
+Give a path, a stop, and the question. Ask omp to build first when the binary does not exist. Most launches stop on entry. Name the adapter for Rust. An extensionless binary is ranked `gdb`, then `lldb-dap`. Build with debug symbols: `cargo build`, or CMake `Debug` from §8. A condition is an expression in the target language.
 
 ```text
 Debug etl/transform.py with sample.csv. Break on line 58 when i == 3,
-inspect the locals and the running total, and explain where the bad value enters.
+inspect the locals, and explain where the bad value enters.
 ```
-
-```text
-Use lldb-dap to launch ./build/repro with arguments --seed 417.
-Stop at main, continue until decode_packet, and inspect the packet header.
-```
-
-```text
-Attach lldb-dap to PID 48120. Pause, show all threads, and identify
-which thread is holding shutdown.
-```
-
-```text
-Use debugpy to attach to 127.0.0.1:5678. When the request handler is reached,
-inspect request.user and explain why authorization fails.
-```
-
-The process has to be listening before that attach. From the same virtualenv:
-
-```sh
-.venv/bin/python -m debugpy --listen 127.0.0.1:5678 path/to/app.py
-```
-
-An extensionless native binary is ranked `gdb`, then `lldb-dap`. Name the adapter for Rust:
 
 ```text
 Use lldb-dap to launch ./target/debug/repro. Stop at main and step into decode_packet.
 ```
 
-`codelldb` is the other Rust choice. Build the binary you launch with debug symbols. `cargo build` is a debug build. `cargo build --release` is the wrong one to step through. For C and C++, the Debug configure in §8 (`-DCMAKE_BUILD_TYPE=Debug`) is the matching build. A conditional breakpoint is an expression in the target language, as in `i == 3` in the Python example.
+Attach only to a process that is already listening:
 
-One root debug session at a time. Ask omp to end the current one before launching another. A stopped process is actually paused. Say "inspect without evaluating expressions" when evaluation might run target code.
+```sh
+.venv/bin/python -m debugpy --listen 127.0.0.1:5678 path/to/app.py
+```
 
-Changing `debug.enabled` applies to a new session.
+One root debug session at a time. A stopped process is paused. `debug.enabled` applies to a new session.
 
 ---
 
@@ -910,9 +870,9 @@ Changing `debug.enabled` applies to a new session.
 omp config get edit.mode
 ```
 
-The result should be `hashline`. The model points at lines, and the runtime checks that the surrounding content still hashes to what it read. A stale file rejects the patch. Re-read, then edit again. That rejection is the safety property.
+The result should be `hashline`. The model points at lines. The runtime checks that the surrounding content still hashes to what it read. A stale file rejects the patch. Re-read, then edit.
 
-The edit body has to start with `[path#HASH]` and a hunk header such as `PUT N.=M:`. A bare `PUT 3: new line` is rejected, the file stays unchanged, and omp sends the format error back so the model can try again. A full-file `write` does not need that shape. Prefer `write` when the model keeps missing the hunk header. `edit.modelVariants` can pin `replace` for one weaker model id if hashline never lands.
+The body starts with `[path#HASH]` and a hunk header such as `PUT N.=M:`. A bare `PUT 3: new line` is rejected. Prefer `write` when the model keeps missing the header. Pin `replace` for one weak model if hashline never lands.
 
 `PI_EDIT_VARIANT` pins the mode for one process (`hashline`, `apply_patch`, `patch`, `replace`, `sloppy`). `auto` leaves the setting unset. Per-model overrides:
 
@@ -1129,21 +1089,17 @@ Use the api-reviewer subagent on the branch diff. Report blockers only.
 Use the migration-runner subagent in an isolated worktree to fix the failing migration test.
 ```
 
-Parallel workers that might touch the same file are still safe to integrate: hashline rejects the second stale write, and that worker re-reads. Prefer worktrees when the tasks are truly independent, then review and merge from the parent session. The Agent Hub (`Ctrl+S` or `Alt+A`) can view a subagent mid-run.
-
-`task.maxRecursionDepth` defaults to 2. `omp worktree list` shows managed worktrees. `omp worktree clear` removes them (`--dry-run` previews).
+Hashline rejects a second stale write, and that worker re-reads. Prefer a worktree when the tasks are independent. The parent reviews and merges. Agent Hub is `Ctrl+S` or `Alt+A`. `task.maxRecursionDepth` defaults to 2. `omp worktree list` and `omp worktree clear` manage the worktrees (`--dry-run` previews).
 
 ---
 
 ## 12. Connectors
 
-Native tools first. MCP second, and only for a system omp does not already speak. omp also imports MCP servers, skills, and rules from Claude Code (`.claude/`), Cursor (`.cursor/`), Codex, Gemini CLI, OpenCode, Windsurf, and VS Code. Run `/mcp list` after the first launch in a repo that already has those files. Keep a server you use. Put the rest in `disabledServers`.
-
-`/mcp disable <name>` writes that denylist when the definition lives in another tool's config. omp does not edit Claude's or Cursor's files.
+Native tool first. Add MCP only for a system omp does not already speak. Skills, rules, and MCP from `.claude/`, `.cursor/`, Codex, Gemini CLI, OpenCode, Windsurf, and VS Code load on launch. Run `/mcp list`. `/mcp disable <name>` denylists a server defined elsewhere. omp does not edit those files.
 
 ### GitHub, native
 
-The GitHub capability uses `gh`, so it sees the same repos, SSO, and branch protection as your account. PR checkout creates a worktree and does not switch the branch you have open. Reads and Actions watches are read-class. Creating a PR, pushing, and checking out are exec-class and follow `tools.approvalMode`.
+Uses your `gh` login, including SSO and branch protection. PR checkout is a worktree and does not switch the branch you have open. Reads are read-class. Creating a PR, pushing, and checking out follow `tools.approvalMode`.
 
 ```sh
 gh auth login
@@ -1163,7 +1119,7 @@ Leave the hosted GitHub MCP (`https://api.githubcopilot.com/mcp/`) disconnected 
 
 ### Web search
 
-`web_search.enabled` defaults to on. The tool follows `modelRoles.web` and `retry.fallbackChains.web` from §6. Exa is the coding search when its credential works. DuckDuckGo is the keyless fallback so a missing key still returns sources.
+`web_search.enabled` defaults to on and follows `modelRoles.web`. This guide pins `web/duckduckgo` so search cannot fall through to a hosted model. The query leaves the machine. Set `web_search.enabled: false` when the session must stay offline.
 
 ```sh
 omp web-search --model web/duckduckgo "current Bun release"
@@ -1172,9 +1128,9 @@ omp web-search "site:docs.python.org pathlib read_text"
 
 ### Browser, native
 
-`browser.enabled` defaults to on. Use it for public pages, local dev servers, and DOM checks. omp drops browser-automation MCP servers while that prelude is callable: servers named `playwright`, `puppeteer`, `browserbase`, `browser-tools`, `browser-use`, or `browser`, plus the usual Playwright, Puppeteer, Browserbase, and browser-use packages. A dropped server from Claude or Cursor never appears in `/mcp list`. Set `browser.enabled: false` only when you have a reason to run one of those servers instead. This setup does not.
+`browser.enabled` defaults to on. While it is on, omp drops Playwright, Puppeteer, Browserbase, and browser-use servers, including ones imported from Claude or Cursor. They do not appear in `/mcp list`. This setup keeps the native browser.
 
-Browser Relay is the logged-in path. It drives an existing Chrome tab, including that tab's cookies. That is the same account access you have. Install it once, then enable it:
+Browser Relay drives a logged-in Chrome tab, cookies included. Install it once:
 
 ```sh
 omp browser-relay install
@@ -1192,9 +1148,7 @@ Docs: https://omp.sh/docs/web
 
 ### Context7, every repo
 
-Context7 and DeepWiki are the global MCP servers worth loading everywhere. Context7 returns current library documentation, so the agent writes against the API that ships now. DeepWiki returns how a public repository is put together.
-
-Prefer OAuth so the Context7 key never sits in the file. Save this as `~/.omp/agent/mcp.json`:
+Save this as `~/.omp/agent/mcp.json`. OAuth keeps the Context7 key out of the file.
 
 ```json
 {
@@ -1219,7 +1173,11 @@ In a session, `/mcp reauth context7` (or the prompt omp shows on first use) comp
 /mcp test context7
 ```
 
-API-key alternative, if you already have a key from https://context7.com/dashboard. Export `CONTEXT7_API_KEY` in the shell that starts omp. omp expands `${VAR}` in native MCP files. An unset variable is left as the literal placeholder, which will fail the handshake, so export the key first. Keep the `deepwiki` entry from the file above when you switch only the Context7 block.
+Context7 is the current function signature. DeepWiki, in the same file, is how a public upstream repo is built. No key. Test with `/mcp test deepwiki`. Docs: https://docs.devin.ai/work-with-devin/deepwiki-mcp
+
+Private repos: export `DEVIN_API_KEY` and point `deepwiki` at `https://mcp.devin.ai/mcp` with `Authorization: Bearer ${DEVIN_API_KEY}`. Leave that off until you need it.
+
+API-key alternative, if you already have one from https://context7.com/dashboard. Export `CONTEXT7_API_KEY` before starting omp. An unset `${VAR}` stays literal and the handshake fails. Keep the `deepwiki` entry when you replace only the Context7 block.
 
 ```json
 {
@@ -1235,29 +1193,10 @@ API-key alternative, if you already have a key from https://context7.com/dashboa
 }
 ```
 
-Ask the bundled `librarian`, and name the server:
-
 ```text
-Use the librarian subagent and the Context7 server for the Next.js version in package.json.
-Show the current API for the function I am about to call, with a source URL, before editing.
+Use the librarian and Context7 for the Next.js version in package.json.
+Show the current API, with a source URL, before editing.
 ```
-
-### DeepWiki, every repo
-
-DeepWiki is already in the global file above. Public repositories need no key. The server exposes `read_wiki_structure`, `read_wiki_contents`, and `ask_question` for repositories indexed on DeepWiki. Docs: https://docs.devin.ai/work-with-devin/deepwiki-mcp
-
-```text
-/mcp test deepwiki
-```
-
-```text
-Ask DeepWiki how the version of this dependency pinned in the lockfile is structured.
-Read the wiki for the module I am about to change, then edit.
-```
-
-Context7 answers the current function signature. DeepWiki answers the layout of that upstream project. Use both when a dependency upgrade touches more than a call site.
-
-Private repositories use a different endpoint and a Devin API key. Leave that off unless you need it. Export `DEVIN_API_KEY` in the shell that starts omp, and point `deepwiki` at `https://mcp.devin.ai/mcp` with header `Authorization: Bearer ${DEVIN_API_KEY}`. An unset variable stays as the literal placeholder and the handshake fails.
 
 ### Per-repo MCP
 
@@ -1337,15 +1276,13 @@ Read the Figma frame for this screen, then implement the layout to match it.
 | Playwright, Puppeteer, Browserbase, browser-use | omp's browser and Browser Relay cover this. Those servers are dropped while `browser.enabled` is true. |
 | GitHub MCP next to `github.enabled` | Duplicate tools for issues, PRs, and files. |
 | A memory MCP | `mnemopi` is the memory store. A second memory server splits recall. |
-| Every Claude or Cursor server you imported | Keep the ones in the table above. Disable the rest by name. |
+| Imported Claude or Cursor servers | Keep Context7, DeepWiki, and the per-repo servers you use. Disable the rest by name. |
 
 ### Secrets and checks
 
-omp expands `${VAR}` and `${VAR:-default}` in `command`, `args`, `env`, `cwd`, `url`, `headers`, `auth`, and `oauth` for its own MCP files. A header or env value that is exactly an environment-variable name is replaced with that variable's value. A value that starts with `!` runs as a shell command and uses its stdout, which is how you build `Authorization` without writing the token down.
+omp expands `${VAR}` and `${VAR:-default}` in its own MCP files. A header or env value that is exactly a variable name is replaced with that variable. A value starting with `!` runs as a shell command and uses stdout.
 
-Do not commit tokens. Prefer OAuth (`/mcp reauth <name>`) or an env var. A `stdio` server is a program with your permissions. Read project `.omp/mcp.json` before you trust a fresh clone. Because OAuth credentials are stored per profile and server URL, an untrusted checkout that names the same URL can use that credential. Open untrusted repos under `omp --profile untrusted`.
-
-After an edit while omp is running:
+Do not commit tokens. Prefer `/mcp reauth <name>` or an env var. Read a fresh clone's `.omp/mcp.json` before you trust it. OAuth is stored per profile and server URL, so an untrusted checkout that names the same URL can reuse that credential. Open it with `omp --profile untrusted`.
 
 ```text
 /mcp reload
@@ -1353,26 +1290,13 @@ After an edit while omp is running:
 /mcp test context7
 ```
 
-A successful test shows the server name, version, tool count, and up to ten tool names. Set `"instructions": false` on a server whose own guidance fights yours. That field is honored on omp-native files.
-
-### How a task should use the stack
-
-```text
-Implement the issue. Read it from Linear first.
-Before calling any third-party API, pull the current docs from Context7 and cite the URL.
-When the change depends on how a public dependency is structured, ask DeepWiki and name the repository.
-When this repo has a working Figma server, read the frame before editing the UI.
-Use LSP for the rename. Preview it, then apply it. Apply the server's quick fix and read diagnostics again, including YAML, shell, Terraform, Dockerfiles, and Markdown when those files change. Run the tests.
-If a test fails for a reason you cannot see statically, debug it.
-If the failure is in production, read the matching Sentry issue and, for a data question, query Postgres in restricted mode.
-Then have the reviewer subagent check the diff, and open the PR with the GitHub tool.
-```
+Set `"instructions": false` on a server whose own guidance fights yours.
 
 ---
 
 ## 13. Memory and autolearn
 
-Memory is off by default. Compaction shortens one session. Memory is what later sessions can see. Pick one backend.
+Memory is off by default. Compaction shortens one session. Memory is what the next session can see. Claude and Cursor memories are not imported.
 
 | Backend | Use it when | Trade-off |
 | --- | --- | --- |
@@ -1418,9 +1342,7 @@ autolearn:
   autoContinue: false
 ```
 
-`autoContinue: false` keeps standing guidance and does not spend a hidden capture turn. Set `autoContinue: true` only when you want omp, after a primary turn with at least `minToolCalls` completed tool calls, to run a private capture turn and write managed skills. Aborted turns, plan mode, and goal-loop turns are skipped. Managed skills live in `~/.omp/agent/managed-skills`. Leave that directory to the tool.
-
-`learn` requires both `autolearn.enabled` and a `local`, `hindsight`, or `mnemopi` backend.
+`autoContinue: false` does not spend a hidden capture turn. Set it `true` only when a private capture turn, after at least `minToolCalls` tool calls, is worth it. Aborted turns, plan mode, and goal-loop turns are skipped. Managed skills land in `~/.omp/agent/managed-skills`. `learn` also needs a `local`, `hindsight`, or `mnemopi` backend.
 
 ---
 
@@ -1481,7 +1403,7 @@ Do not skip confirmation. Do not skip the health window.
 
 Author the next skill the second time you walk a checklist by hand: release, incident, migration review, dependency bump.
 
-`<repo>/.omp/skills/verify-change/SKILL.md` is the skill that makes the harness stricter than a single model that declares victory:
+`<repo>/.omp/skills/verify-change/SKILL.md`:
 
 ```markdown
 ---
@@ -1531,15 +1453,13 @@ omp stats --summary
 omp stats
 ```
 
-`omp stats` opens the usage dashboard. Rebalance `task` and `advisor.reviewMode` from that report, not from a guess on day one.
-
-Background jobs are on (`async.enabled`, cap `async.maxJobs` 100). Long shell commands auto-background after `bash.autoBackground.thresholdMs` (60 seconds). `launch.enabled` lets omp supervise named long-running processes through `proc://`.
+`omp stats` opens the usage dashboard. Rebalance `task` and `advisor.reviewMode` from that report. Long shell commands auto-background after 60 seconds.
 
 ---
 
 ## 16. Always-on coverage
 
-This machine stays on. The steps below are the open-source stand-ins for the Claude Code surfaces that can be covered that way. An MCP server can act only inside a session that is already running. Timers and a self-hosted GitHub runner are what start work on their own.
+Skip this until the interactive setup works. An MCP server acts only inside a running session. A timer or a self-hosted runner is what starts work with no terminal open.
 
 Unattended jobs use a second config file so they cannot drive the desktop or the browser:
 
@@ -1631,7 +1551,7 @@ Install omp inside the container the same way as on the host. Do not mount your 
 
 ### Dictation
 
-Local speech-to-text. This is not a hosted voice service. Leave `/live` unused. That command calls a hosted realtime voice path.
+Local speech-to-text. Leave `/live` unused. That path is hosted.
 
 ```sh
 omp models --kind stt
@@ -1811,15 +1731,23 @@ On Linux: `pipx install semgrep`. Ask the bundled `security-reviewer` to run tha
 
 ## 17. First session
 
-From a real repository:
+Prove the loop in a real repository before the harness checks. Use the shell where `OLLAMA_CONTEXT_LENGTH` is set, and the selector that passed the §6 probe.
 
 ```sh
 cd /path/to/repo
+omp --approval-mode write --model ollama/qwen3-16k:latest
+```
+
+Ask it to add a one-line comment at the top of a file you name, with the edit tool, and to show the diff. Do not commit. The file on disk must change. A reply that describes the edit is not the loop. `write` mode approves the edit and asks before a shell command. Approve the edit.
+
+`gh` is not required for that check. The steps below are the rest of the harness, after §7 through §14.
+
+```sh
 gh auth status
 omp --approval-mode write
 ```
 
-1. `/model`, Roles view. Every role you set resolves, including `web`, and each fallback row resolves.
+1. `/model`, Roles view. Every role you set resolves to a local selector, including `web` as `web/duckduckgo`, and each fallback row resolves.
 2. `omp web-search --model web/duckduckgo "current Bun release"` returns sources. Skip this when you set `web_search.enabled` to false.
 3. Ask for a definition, then a previewed rename of a local symbol. The language server does the rename. After a hashline edit, diagnostics come back without a full file rewrite.
 4. Ask for a breakpoint and one step in a small program whose adapter you installed. Name `lldb-dap` or `codelldb` for a Rust binary. For Node, break in a `.ts` file only after the source-map build from §9.
@@ -1831,9 +1759,7 @@ omp --approval-mode write
 10. `/memory` and confirm the backend.
 11. Start a new session and confirm the force-push guard notification.
 
-A comparison task against Claude Code on the same repo: a bug whose cause is a runtime value, plus a dependency API that has changed since the model's training cutoff, plus a pull request to open. omp should rename through the language server, stop the process in the debugger, cite a Context7 URL, take the advisor's note, and open the PR through `gh` into a worktree. Claude Code can write the patch. This harness can show the value, the current API, and the review before the patch lands.
-
-Continue the same project later with `omp -c`. Pick another session with `omp -r`. Share the live session with `/collab` when a teammate should watch or steer it. Guests get the transcript. Mutations stay on the host. Docs: https://omp.sh/docs/collab
+Continue later with `omp -c`. Pick another session with `omp -r`. `/collab` shares the live session. Guests get the transcript. Mutations stay on the host. Docs: https://omp.sh/docs/collab
 
 ---
 
@@ -1861,7 +1787,8 @@ omp config get checkpoint.enabled    # true
 ```
 
 - [ ] `omp models ollama` lists the coder you assigned, and every chat role resolves to `ollama/`, `llama.cpp/`, `lm-studio/`, `local/`, or `apple/`.
-- [ ] The §6 probe created `hello.txt` containing `ready`. A transcript that only describes the write does not count.
+- [ ] The §6 probe used `--model` with a selector from `omp models ollama`, and `hello.txt` contains `ready`. A transcript that only describes the write does not count.
+- [ ] In a repo, one edit changed a file on disk. `echo $OLLAMA_CONTEXT_LENGTH` in that shell matches the Modelfile `num_ctx`.
 - [ ] `omp web-search --model web/duckduckgo "current Bun release"` returns sources, unless web search is off.
 - [ ] `gh auth status` is logged in, and a new session exposes the GitHub tool.
 - [ ] Startup prints no warning about an unknown fallback entry.
@@ -1876,10 +1803,9 @@ omp config get checkpoint.enabled    # true
 - [ ] `AGENTS.md` exists in repositories that have non-obvious commands or forbidden paths.
 - [ ] One live task has used LSP, one has used the debugger, one has used Context7, one has used a subagent, and one edit went through hashline.
 - [ ] After a week, `omp stats --summary` still fits the budget you intended for `task` and `advisor`.
-- [ ] An ACP editor starts a thread with `omp acp` and the local coder.
-- [ ] `omp --config ~/.omp/unattended.yml -p "Reply with the word ready"` prints `ready` and exits.
-- [ ] The daily timer is loaded (`launchctl list` or `systemctl --user list-timers`).
-- [ ] A test pull request on the self-hosted runner receives the review comment.
+- [ ] Optional, §16: an ACP editor starts a thread with `omp acp` and the local coder.
+- [ ] Optional, §16: `omp --config ~/.omp/unattended.yml -p "Reply with the word ready"` prints `ready` and exits.
+- [ ] Optional, §16: the daily timer is loaded, or a test pull request on the self-hosted runner receives the review comment.
 
 ---
 
@@ -2104,14 +2030,14 @@ Paths:
 
 1. Install and authenticate.
    - `omp --version` must succeed.
-   - Install and start Ollama (or llama.cpp, or LM Studio). Pull the local coders from §6 and raise `num_ctx` to at least 32768, 65536 on a 32 GB machine.
-   - `omp models ollama` must list those models before you write roles. Do not assign a hosted model.
-   - On 24 GB, pull `qwen3:14b`, create `qwen3-16k` with `num_ctx` 16384, and set `OLLAMA_CONTEXT_LENGTH=16384`. Do not assign `qwen2.5-coder` to any role that calls tools.
-   - Run the §6 probe. `hello.txt` must exist before you continue.
+   - Install Ollama in the same environment as omp. `curl -sf http://127.0.0.1:11434/api/version` must print a version. A WSL shell does not see the Windows Ollama app.
+   - Pull the one coder from §6 that fits, create its Modelfile, and persist `OLLAMA_CONTEXT_LENGTH` at that same `num_ctx` in the shell profile. Do not create Modelfiles for models you did not pull. Do not assign `qwen2.5-coder`.
+   - `omp models ollama` must list the model before you write roles. Do not assign a hosted model.
+   - Run the §6 probe with `--model` set to the printed selector. `hello.txt` must contain `ready` before you continue.
 
 2. Model roles and fallbacks in the global config.
    - Set `modelRoles` for `default`, `slow`, `plan`, `smol`, `commit`, `task`, `advisor`, `tiny`, `memory`, and `web` using only selectors from `omp models ollama`, `omp models llama.cpp`, `omp models lm-studio`, `omp tiny-models list`, or `web/duckduckgo`.
-   - The default coder is a local model that passed the tool-call probe: Qwen3-Coder on 32 GB, `qwen3-16k` on 24 GB, or gpt-oss 20B on 16 GB. The advisor is local Devstral when it fits, otherwise `"@default"`. `task` and `smol` are `"@default"` until a smaller model passes the same probe.
+   - The default coder is a local model that passed the tool-call probe: `qwen3-coder-64k` on 32 GB, `qwen3-16k` on 24 GB, or `gpt-oss-32k` on 16 GB. The advisor is local Devstral when it fits, otherwise `"@default"`. `task` and `smol` are `"@default"` until a smaller model passes the same probe. Use `reviewMode: agent-end` when the advisor is `"@default"`.
    - Set `retry.fallbackChains` to other local models only. Set `retry.fallbackChains.web` to `[]`.
    - Set `disabledProviders` to the hosted list in §6, including `anthropic`, `openai`, `openai-codex`, `google`, and `openrouter`.
    - Verify: `omp models ollama`, `omp web-search --model web/duckduckgo "current Bun release"`, then `/model` → Roles. Every chat role is local. Startup warnings about chains are fixed before continuing.
@@ -2172,7 +2098,7 @@ Paths:
     - Leave `browser.enabled` and `web_search.enabled` on.
     - Spend is inspected with `omp stats --summary`, not with `npx` packages.
 
-12. Always-on coverage, from §16.
+12. Always-on coverage, from §16, only when the user asked for an editor, dictation, a timer, a runner, or Slack.
     - Write `~/.omp/unattended.yml` denying `computer` and `browser`.
     - Set `stt.enabled` true and `checkpoint.enabled` true. Set `modelRoles.dictation` only to an id from `omp models --kind stt`. Leave `/live` unused.
     - Register `omp acp` in Zed, JetBrains, or a VS Code ACP client.
@@ -2181,7 +2107,7 @@ Paths:
     - Add Slack at `https://mcp.slack.com/mcp` when the user wants Slack from an open session.
     - Install the Semgrep CLI for the security review step.
 
-Deliverable: global `config.yml` as in the setup guide, Context7 and DeepWiki connected, GitHub enabled through `gh`, the force-push hook installed, three custom subagents, the `verify-change` skill, memory on, advisor on, the unattended config, language servers (including YAML, shell, Terraform, Docker, and Markdown) and at least one debug adapter verified with `command -v` or the module version check, and a short report of every key you changed and why.
+Deliverable: global `config.yml` as in the setup guide, Context7 and DeepWiki connected, GitHub enabled through `gh`, the force-push hook installed, three custom subagents, the `verify-change` skill, memory on, advisor on, language servers (including YAML, shell, Terraform, Docker, and Markdown) and at least one debug adapter verified with `command -v` or the module version check, plus whatever from step 12 the user asked for. Report every key you changed and why.
 ````
 
 ---
@@ -2190,6 +2116,4 @@ Deliverable: global `config.yml` as in the setup guide, Context7 and DeepWiki co
 
 Run `omp stats --summary`. If the advisor pass or subagent fan-out makes the machine swap the local model on every turn, switch review to `agent-end`. `task` already points at `@default`. If Context7, DeepWiki, Sentry, Postgres, or Figma show up as noise in transcripts, set `"instructions": false` on that server before you disconnect it.
 
-Add a subagent the second time you delegate the same kind of review. Add a project MCP server the second time you paste output from a system the agent cannot see. Raise `autolearn.autoContinue` to `true` only after captured lessons are worth the extra turn.
-
-The advantage over Claude Code is the stack running together: language-server edits, a debugger, hashline, an advisor, worktree subagents, `gh`, Context7, and a hook the model cannot override. A longer MCP list does not add to that. A duplicate GitHub or browser server subtracts from it.
+Add a subagent the second time you delegate the same kind of review. Add a project MCP server the second time you paste output from a system the agent cannot see. Raise `autolearn.autoContinue` to `true` only after captured lessons are worth the extra turn. A duplicate GitHub or browser server costs context on every turn.
