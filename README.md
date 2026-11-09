@@ -18,7 +18,7 @@ Claude Code and Cursor already have subagents, skills, hooks, and a model picker
 
 **A second context, already seated.** Claude Code can spawn a reviewer subagent. Since 2.1.300, `/advisor` can also seat another Claude model for the session. You pick it. If you pick none, none runs. omp's advisor reads the primary turn from its own context, and it can be a different family. A concern or a blocker wakes the coder. The coder can answer the note. A hook is the rule with no appeal. This guide refuses `git push --force`.
 
-**The agent calls the IDE.** With an LSP plugin, Claude Code can read diagnostics and navigate. A rename in omp goes through the language server, so re-exports move with the symbol. A crash is a stopped debug session, once that adapter is installed. The Claude Code changelog shows no debugger tool. Hashline rejects a patch whose anchors no longer match. Claude's edit is a text replacement, and it can still apply after the file changes if the old text is unique. On omp's published edit-format check, Grok Code Fast 1 went from 6.7% to 68.3% on the same weights. A matching rule can abort a bad stream mid-token and retry. The same agent runs in the terminal or, over [ACP](https://omp.sh/docs/acp), in Zed.
+**The agent calls the IDE.** With an LSP plugin, Claude Code can read diagnostics and navigate. A rename in omp goes through the language server, so re-exports move with the symbol. A crash is a stopped debug session, once that adapter is installed. The Claude Code changelog shows no debugger tool. Hashline rejects a patch whose anchors no longer match. Claude's edit is a text replacement. Since 2.1.208 it still applies after the file changes when the old text matches the current file exactly and once, and Claude Code can read the file without prompting. On [Can Bölük's edit-format check](https://blog.can.ac/2026/02/12/the-harness-problem/), Grok Code Fast 1 went from 6.7% on patch to 68.3% on the original hashline, same weights. That post's chart lists the model at +64.6 points over patch, and a later hashline revision improves 12 of 16 models further. A [time-traveling stream rule](https://omp.sh/docs/ttsr) matches the live stream and can abort it mid-stream, then generate again. The same agent runs in the terminal or, over [ACP](https://omp.sh/docs/acp), in Zed.
 
 Skills, rules, and MCP servers from Claude, Cursor, Codex, Cline, and Copilot load as they are. Claude's saved memory stays in Claude.
 
@@ -27,7 +27,7 @@ Skills, rules, and MCP servers from Claude, Cursor, Codex, Cline, and Copilot lo
 | Models | Claude models | Many vendors, hosted | Any family. Localhost until you opt in |
 | Where chat runs | Anthropic, or your cloud account | The model provider | Weights on this machine |
 | Review | A subagent, or `/advisor` if you turn it on. Still Claude | The agent, in the editor | An advisor on its own context. A different family when it fits |
-| Edits | Text replacement. A changed file can still match | Text, in the IDE | Hashline. Stale anchors rejected |
+| Edits | Text replacement. Since 2.1.208, an exact unique match of the current file still applies | Text, in the IDE | Hashline. Stale anchors rejected |
 | Language server, debugger | LSP plugin: diagnostics and navigation. No debugger tool | The editor has them | The agent renames through LSP and drives DAP |
 | Parallel work | Worktree subagents | Agents and worktrees | Worktrees, typed results, the parent integrates |
 
